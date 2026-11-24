@@ -1,0 +1,12 @@
+# Konfigurasi minimal untuk Supabase CLI. Ganti project_id dengan milik Anda.
+project_id = "ai-smart-panel"
+
+# JWT diverifikasi di dalam kode fungsi (auth.getUser) agar kompatibel dengan semua jenis signing key.
+[functions.bootstrap]
+verify_jwt = false
+[functions.account]
+verify_jwt = false
+[functions.analyze]
+verify_jwt = false
+[functions.admin]
+verify_jwt = false

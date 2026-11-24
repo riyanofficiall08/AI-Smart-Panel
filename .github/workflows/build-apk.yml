@@ -1,0 +1,105 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  FLUTTER_VERSION: 3.32.x   # Dart 3.8 · cocok dengan AGP 8.7.3 / Gradle 8.12 / Kotlin 2.1.0 di android/
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Guard — tidak boleh ada sisa Android embedding V1
+        run: |
+          set -e
+          if grep -rnE "io\.flutter\.app\.|FlutterApplication|PluginRegistry\.Registrar|GeneratedPluginRegistrant\.registerWith" android/app/src; then
+            echo "::error::Ditemukan referensi embedding V1"; exit 1
+          fi
+          grep -q 'android:name="flutterEmbedding"' android/app/src/main/AndroidManifest.xml
+          grep -q 'android:value="2"' android/app/src/main/AndroidManifest.xml
+          grep -q 'FlutterActivity' android/app/src/main/kotlin/com/aismartpanel/app/MainActivity.kt
+          echo "Embedding V2 OK"
+
+      - name: Tulis config/dart_defines.json (anon key publik; JANGAN isi service_role / OpenAI key)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          EMAIL_DOMAIN: ${{ secrets.EMAIL_DOMAIN }}
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "::warning::Secrets SUPABASE_URL / SUPABASE_ANON_KEY belum diisi — APK akan terbangun tetapi menampilkan 'Konfigurasi Supabase belum diisi'."
+          fi
+          python3 - <<'PY'
+          import json, os
+          d = {"SUPABASE_URL": os.environ.get("SUPABASE_URL", ""),
+               "SUPABASE_ANON_KEY": os.environ.get("SUPABASE_ANON_KEY", ""),
+               "EMAIL_DOMAIN": os.environ.get("EMAIL_DOMAIN") or "aisp.example.com"}
+          json.dump(d, open("config/dart_defines.json", "w"), indent=2)
+          PY
+
+      - run: flutter --version
+      - run: flutter clean
+      - run: flutter pub get
+      - name: Pemeriksaan dependency
+        run: |
+          flutter pub deps --style=compact | head -80
+          flutter pub outdated || true
+      - name: Analisis kode
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+
+      - name: Build APK debug
+        run: flutter build apk --debug --dart-define-from-file=config/dart_defines.json
+
+      - name: Siapkan release signing (hanya jika secrets keystore diisi)
+        id: signing
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -n "$KS_B64" ] && [ -n "$KS_PASS" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASS" ]; then
+            echo "$KS_B64" | base64 -d > android/app/upload-keystore.jks
+            printf 'storeFile=upload-keystore.jks\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
+              "$KS_PASS" "$KEY_ALIAS" "$KEY_PASS" > android/key.properties
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Keystore release tidak tersedia — build release DILEWATI (tidak memakai key palsu)."
+          fi
+
+      - name: Build APK release
+        if: steps.signing.outputs.available == 'true'
+        run: flutter build apk --release --dart-define-from-file=config/dart_defines.json
+
+      - name: Verifikasi isi APK
+        run: |
+          ls -lh build/app/outputs/flutter-apk/
+          for f in build/app/outputs/flutter-apk/*.apk; do
+            echo "== $f"; unzip -l "$f" | grep -E "AndroidManifest.xml|classes.dex|libflutter.so" | head
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ai-smart-panel-apk
+          path: build/app/outputs/flutter-apk/*.apk
+          if-no-files-found: error
+          retention-days: 30

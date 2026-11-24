@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="aisp_a11y_desc">Hanya membaca penekanan tombol Volume+ untuk menampilkan atau menyembunyikan panel AI Smart Panel. Isi layar dan aplikasi lain tidak dibaca.</string>
+</resources>

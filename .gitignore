@@ -1,0 +1,16 @@
+config/dart_defines.json
+supabase/.env
+build/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+
+# Android: scaffold ikut repo; abaikan artefak lokal & rahasia
+android/.gradle/
+android/local.properties
+android/key.properties
+android/**/*.jks
+android/**/*.keystore
+android/app/.cxx/
+android/captures/
